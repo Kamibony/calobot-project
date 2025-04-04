@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nome do arquivo: calobot_core.py (v28 - Verificação Final de Estrutura try/except)
+# Nome do arquivo: calobot_core.py (v30 - Simplificação try/except goal_confirmation)
 
 import firestore_manager
 import vertexai
@@ -129,7 +129,7 @@ def get_reprompt(user_display_name, field_name, invalid_input=""):
     msg = reprompts.get(field_name, "Inválido. Tente de novo.")
     task = f"Tarefa: User '{user_display_name}' deu input inválido ('{invalid_input}') p/ '{field_name}'. Peça de novo: '{msg}'"; return f"{BASE_PERSONA_PROMPT}\n\n{task}\n\nCaloBot:"
 
-# --- Função Principal de Processamento (v28 - Verificação Final Indentação/Estrutura) ---
+# --- Função Principal de Processamento (v30 - Simplificação try/except goal_confirmation) ---
 def process_message(user_id, user_name_from_telegram, message_text):
     if not db or not model: logger.critical(f"Abort {user_id}: Deps off."); return "Problemas técnicos internos 🤖💦."
     logger.info(f"\n--- Processando user:{user_id}, Msg:'{message_text}' ---")
@@ -148,15 +148,10 @@ def process_message(user_id, user_name_from_telegram, message_text):
         profile_incomplete, missing = is_profile_incomplete(current_user_data)
         if profile_incomplete:
             first=missing[0]; logger.info(f"Onboarding perfil: {first}");
-            try:
-                user_doc_ref.update({'user_state.awaiting': first}); logger.info(f"State='{first}'");
-                prompt_final=get_onboarding_prompt(user_display_name, first)
-            except Exception as e:
-                logger.error(f"Erro set await {first}: {e}"); prompt_final="Erro iniciar perfil."
-        elif diet_settings.get('daily_calorie_goal') is None:
-            logger.info("Onboarding meta."); prompt_final=f"{BASE_PERSONA_PROMPT}\n\nTarefa: Perfil ok! Diga prox passo=meta.\n\nCaloBot:"
-        else:
-            logger.info("Onboarding OK."); prompt_final = ""
+            try: user_doc_ref.update({'user_state.awaiting': first}); logger.info(f"State='{first}'"); prompt_final=get_onboarding_prompt(user_display_name, first)
+            except Exception as e: logger.error(f"Erro set await {first}: {e}"); prompt_final="Erro iniciar perfil."
+        elif diet_settings.get('daily_calorie_goal') is None: logger.info("Onboarding meta."); prompt_final=f"{BASE_PERSONA_PROMPT}\n\nTarefa: Perfil ok! Diga prox passo=meta.\n\nCaloBot:"
+        else: logger.info("Onboarding OK."); prompt_final = ""
         if not prompt_final: return None
 
     # --- LÓGICA 2: PROCESSAR RESPOSTA ESPERADA (ONBOARDING) ---
@@ -172,28 +167,22 @@ def process_message(user_id, user_name_from_telegram, message_text):
 
         # --- Bloco de Validação ---
         if currently_awaiting == 'birth_year':
-            try:
-                 year = int(text_input_to_validate); current_year = datetime.datetime.now(datetime.timezone.utc).year;
+            try: year = int(text_input_to_validate); current_year = datetime.datetime.now(datetime.timezone.utc).year;
                  if 1900 < year <= current_year: value_to_save=year; is_valid=True; dict_to_update_key='profile'
                  else: logger.warning(f"Input inválido (range): {year}")
-            except ValueError:
-                 logger.warning(f"Input inválido (não número): {text_input_to_validate}")
+            except ValueError: logger.warning(f"Input inválido (não número): {text_input_to_validate}")
         elif currently_awaiting == 'gender':
             text_lower=text_input_to_validate.lower();
             if text_lower in ['masculino','m','male']: value_to_save='male'; is_valid=True; dict_to_update_key='profile'
             elif text_lower in ['feminino','f','female']: value_to_save='female'; is_valid=True; dict_to_update_key='profile'
         elif currently_awaiting == 'height_cm':
-            try:
-                 height=float(text_input_to_validate.lower().replace('cm','').replace(',','.').strip());
+            try: height=float(text_input_to_validate.lower().replace('cm','').replace(',','.').strip());
                  if 100<=height<=250: value_to_save=int(height); is_valid=True; dict_to_update_key='profile'
-            except ValueError: # Mais específico
-                 pass
+            except ValueError: pass
         elif currently_awaiting == 'current_weight_kg':
-            try:
-                 weight=float(text_input_to_validate.lower().replace('kg','').replace(',','.').strip());
+            try: weight=float(text_input_to_validate.lower().replace('kg','').replace(',','.').strip());
                  if 30<=weight<=300: value_to_save=weight; is_valid=True; dict_to_update_key='profile'
-            except ValueError: # Mais específico
-                 pass
+            except ValueError: pass
         elif currently_awaiting == 'activity_level':
             text_lower=text_input_to_validate.lower(); map_act={'sedentário':'sedentary','leve':'light','moderado':'moderate','ativo':'active','muito ativo':'extra_active'}; valid_en=['sedentary','light','moderate','active','extra_active']; matched=None;
             for k,v in map_act.items():
@@ -206,30 +195,73 @@ def process_message(user_id, user_name_from_telegram, message_text):
                 if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
             if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
+        # ----- INÍCIO: BLOCO goal_confirmation SIMPLIFICADO v30 -----
         elif currently_awaiting == 'goal_confirmation':
-            custom_goal=None; is_confirmation=False; is_valid=False
-            if nlu_result and nlu_result.get('intent')=='PROVIDE_INFO' and 'info_value' in nlu_result['entities']:
-                try: custom_goal=int(nlu_result['entities']['info_value']);
-                     if 1000<=custom_goal<=10000: value_to_save=custom_goal; is_valid=True; field_to_save='daily_calorie_goal'; dict_to_update_key='diet_settings'; logger.info(f"Meta NLU custom:{value_to_save}")
-                     else: logger.warning(f"Meta NLU range:{custom_goal}")
-                except ValueError: logger.warning(f"info_value NLU não num.:{nlu_result['entities']['info_value']}")
-            elif nlu_result and nlu_result.get('intent') in ['AFFIRMATION', 'CONFIRMATION']: is_confirmation=True
-            if not is_valid and not is_confirmation: # Fallback
-                text_lower_orig=message_text.strip().lower(); yes_words=['sim','s','ok','k','aceito','confirmado','confirmo','yes','y']
-                if text_lower_orig in yes_words: is_confirmation=True; logger.warning("NLU falhou, fallback 'sim'.")
-                else: try: cal_match=re.search(r'\d+',message_text); custom_goal=int(cal_match.group(0));
-                          if 1000<=custom_goal<=10000: value_to_save=custom_goal; is_valid=True; field_to_save='daily_calorie_goal'; dict_to_update_key='diet_settings'; logger.warning(f"NLU falhou, fallback num.:{value_to_save}")
-                          else: logger.warning(f"Fallback num range:{custom_goal}")
-                     except: pass
-            if is_confirmation and not is_valid:
-                logger.info(f"Confirmando meta sugerida..."); age=firestore_manager.calculate_age(profile_data.get('birth_year')); bmr=firestore_manager.calculate_bmr_mifflin(profile_data.get('current_weight_kg'),profile_data.get('height_cm'), age, profile_data.get('gender')); tdee=firestore_manager.calculate_tdee(bmr, profile_data.get('activity_level')); suggested=firestore_manager.suggest_calorie_goal(tdee, profile_data.get('goal'))
-                if suggested: value_to_save=suggested; is_valid=True; field_to_save='daily_calorie_goal'; dict_to_update_key='diet_settings'; logger.info(f"Meta sugerida ({value_to_save}) aceita.")
-                else: logger.error("Erro recalcular meta.")
+            custom_goal = None; is_confirmation = False; is_valid = False; value_to_save = None;
+            dict_to_update_key = None; field_to_save = 'daily_calorie_goal'; # Default field
+            potential_goal_str = None; nlu_intent = None; potential_goal = None # Init potential_goal
+
+            if nlu_result: nlu_intent = nlu_result.get('intent')
+
+            # Tentativa 1: Obter string numérica (NLU ou Fallback)
+            parsed_value_source = None
+            if nlu_intent == 'PROVIDE_INFO' and 'info_value' in nlu_result['entities']:
+                potential_goal_str = str(nlu_result['entities']['info_value'])
+                parsed_value_source = "NLU"
+            else: # Fallback para regex no texto original
+                cal_match = re.search(r'\d+', message_text)
+                if cal_match:
+                    potential_goal_str = cal_match.group(0)
+                    parsed_value_source = "REGEX_FALLBACK"
+                else:
+                    logger.warning("Nenhuma string numérica encontrada via NLU ou Regex.")
+
+            # Tentativa 2: Converter string para int (se encontrada)
+            if potential_goal_str:
+                try: # TRY apenas para a conversão
+                    cleaned_str = re.sub(r'[^\d]', '', potential_goal_str) # Limpa novamente
+                    if cleaned_str:
+                        potential_goal = int(cleaned_str)
+                        logger.info(f"String convertida para int: {potential_goal}")
+                    else:
+                        logger.warning(f"String numérica estava vazia pós limpeza: '{potential_goal_str}'")
+                        potential_goal = None # Garante que é None
+                except (ValueError, TypeError): # EXCEPT apenas para a conversão
+                    logger.warning(f"Erro ao converter '{potential_goal_str}' para int.")
+                    potential_goal = None # Garante que é None se a conversão falhar
+
+            # Tentativa 3: Validar número (se convertido) e Definir custom goal
+            if potential_goal is not None: # Só valida se a conversão funcionou
+                if 1000 <= potential_goal <= 10000:
+                     custom_goal = potential_goal
+                     is_valid = True # É um número válido e no range
+                     value_to_save = custom_goal
+                     dict_to_update_key = 'diet_settings'
+                     logger.info(f"Meta custom ({parsed_value_source}) válida: {value_to_save}")
+                else:
+                     logger.warning(f"Meta numérica ({parsed_value_source}) fora do range: {potential_goal}")
+                     custom_goal = potential_goal # Guarda para mensagem de erro
+
+            # Tentativa 4: Checar confirmação (NLU ou fallback) se não for custom goal válido
             if not is_valid:
-                 logger.warning(f"Input goal_conf inválido:{message_text}");
+                text_lower_orig = message_text.strip().lower()
+                yes_words = ['sim', 's', 'ok', 'k', 'aceito', 'confirmado', 'confirmo', 'yes', 'y']
+                if (nlu_intent in ['AFFIRMATION', 'CONFIRMATION']) or (text_lower_orig in yes_words):
+                    is_confirmation = True
+                    logger.info(f"Confirmação detectada (NLU: {nlu_intent in ['AFFIRMATION', 'CONFIRMATION']}, Fallback: {text_lower_orig in yes_words})")
+                    # Recalcula meta sugerida
+                    age=firestore_manager.calculate_age(profile_data.get('birth_year')); bmr=firestore_manager.calculate_bmr_mifflin(profile_data.get('current_weight_kg'),profile_data.get('height_cm'), age, profile_data.get('gender')); tdee=firestore_manager.calculate_tdee(bmr, profile_data.get('activity_level')); suggested=firestore_manager.suggest_calorie_goal(tdee, profile_data.get('goal'))
+                    if suggested:
+                        value_to_save=suggested; is_valid=True; dict_to_update_key='diet_settings'; logger.info(f"Meta sugerida ({value_to_save}) aceita.")
+                    else: logger.error("Erro recalcular meta.") # is_valid continua False
+
+            # Gera reprompt final se nada deu certo
+            if not is_valid:
+                 logger.warning(f"Input goal_conf inválido final: {message_text}")
                  if custom_goal is not None and not (1000<=custom_goal<=10000): prompt_final=get_reprompt(user_display_name,currently_awaiting,f"{message_text}(Meta fora range)")
                  else: prompt_final=get_reprompt(user_display_name,currently_awaiting,message_text)
                  intent=f"REPROMPT_{currently_awaiting.upper()}"; run_normal_processing=False
+        # ----- FIM: BLOCO goal_confirmation SIMPLIFICADO v30 -----
         # --- Fim da Validação ---
 
         if is_valid: logger.info(f"Input '{currently_awaiting}' OK:{value_to_save}")
@@ -256,24 +288,15 @@ def process_message(user_id, user_name_from_telegram, message_text):
         profile_incomplete, missing = is_profile_incomplete(current_user_data)
         if profile_incomplete: # Onboarding Perfil
             first=missing[0]; logger.info(f"Onboarding perfil:{first}."); intent=f"ONBOARDING_{first.upper()}"
-            try:
-                 user_doc_ref.update({'user_state.awaiting':first})
-                 logger.info(f"State='{first}'")
-                 prompt_final=get_onboarding_prompt(user_display_name,first)
-            except Exception as e:
-                 logger.error(f"Erro set await {first}:{e}")
-                 prompt_final="Erro config perfil."
-                 intent="ERROR_SET_AWAITING"
+            try: user_doc_ref.update({'user_state.awaiting':first}); logger.info(f"State='{first}'"); prompt_final=get_onboarding_prompt(user_display_name,first)
+            except Exception as e: logger.error(f"Erro set await {first}:{e}"); prompt_final="Erro config perfil."; intent="ERROR_SET_AWAITING"
         elif diet_settings.get('daily_calorie_goal') is None: # Onboarding Meta
             logger.info("Onboarding meta."); intent="ONBOARDING_GOAL_SUGGESTION"
             age=firestore_manager.calculate_age(profile_data.get('birth_year')); bmr=firestore_manager.calculate_bmr_mifflin(profile_data.get('current_weight_kg'), profile_data.get('height_cm'), age, profile_data.get('gender')); tdee=firestore_manager.calculate_tdee(bmr, profile_data.get('activity_level')); suggested=firestore_manager.suggest_calorie_goal(tdee, profile_data.get('goal'))
-            if suggested:
-                logger.info(f"Meta sugerida:{suggested}");
-                try:
-                    user_doc_ref.update({'user_state.awaiting':'goal_confirmation'}); logger.info("State='goal_confirmation'")
-                    prompt_tarefa=(f"Tarefa:Perfil ok! TDEE={tdee}, obj='{profile_data.get('goal')}'. Sugiro meta {suggested} kcal. Apresente, pergunte 'sim' ou número."); prompt_final=f"{BASE_PERSONA_PROMPT}\n\n{prompt_tarefa}\n\nCaloBot:"
-                except Exception as e:
-                    logger.error(f"Erro set await goal_conf:{e}", exc_info=True); prompt_final="Erro prep pergunta meta."; intent="ERROR_SET_AWAITING_GOAL"
+            if suggested: logger.info(f"Meta sugerida:{suggested}");
+                 try: user_doc_ref.update({'user_state.awaiting':'goal_confirmation'}); logger.info("State='goal_confirmation'")
+                      prompt_tarefa=(f"Tarefa:Perfil ok! TDEE={tdee}, obj='{profile_data.get('goal')}'. Sugiro meta {suggested} kcal. Apresente, pergunte 'sim' ou número."); prompt_final=f"{BASE_PERSONA_PROMPT}\n\n{prompt_tarefa}\n\nCaloBot:"
+                 except Exception as e: logger.error(f"Erro set await goal_conf:{e}", exc_info=True); prompt_final="Erro prep pergunta meta."; intent="ERROR_SET_AWAITING_GOAL"
             else: logger.error("Erro calc meta."); prompt_tarefa="Erro cálculo meta."; prompt_final=f"{BASE_PERSONA_PROMPT}\n\n{prompt_tarefa}\n\nCaloBot:"; intent="ERROR_CALC_SUGGESTION"
         else: # Onboarding Completo -> NLU
             logger.info("Onboarding OK. Usando NLU..."); nlu_result = get_nlu_understanding(message_text)
@@ -321,11 +344,11 @@ def process_message(user_id, user_name_from_telegram, message_text):
     logger.info(f"--- FIM user:{user_id}(Intent:{intent}).Resp:'{resposta_texto[:100]}...' ---")
     return resposta_texto
 
-# --- Bloco de Teste (v28 - Usa código corrigido) ---
+# --- Bloco de Teste (v30 - Usa código corrigido) ---
 if __name__ == "__main__":
     if db and model and generation_config and safety_settings:
-        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v28 - NLU + Fix IndentError) ---")
-        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V28"
+        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v30 - NLU + Fix SyntaxError goal_conf) ---")
+        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V30"
         print(f"\n\n----- PREP: Resetando {test_user_id_nlu} -----"); user_doc_ref_reset = db.collection('users').document(str(test_user_id_nlu))
         try: user_doc_ref_reset.delete(); print(f"Doc {test_user_id_nlu} deletado.")
         except: print(f"Doc {test_user_id_nlu} não existia/erro delete.")
