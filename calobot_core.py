@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nome do arquivo: calobot_core.py (v31 - REMOVIDO try/except do birth_year)
+# Nome do arquivo: calobot_core.py (v32 - Separa atribuições múltiplas dentro de try)
 
 import firestore_manager
 import vertexai
@@ -66,33 +66,16 @@ JSON Result:
     try: # TRY EXTERNO (Chamada API)
         nlu_config = GenerationConfig(temperature=0.2, top_p=0.95);
         response = model.generate_content(nlu_prompt, generation_config=nlu_config, safety_settings=safety_settings)
-
         if response.candidates and response.candidates[0].content.parts:
             raw = response.candidates[0].content.parts[0].text; logger.debug(f"[NLU] Raw: {raw}")
             try: # TRY INTERNO (Parse JSON)
-                match = re.search(r'```json\s*(\{.*?\})\s*```', raw, re.DOTALL|re.IGNORECASE);
-                json_str = match.group(1) if match else raw;
-                data = json.loads(json_str)
-                if isinstance(data, dict) and "intent" in data:
-                     data.setdefault("entities",{});
-                     logger.info(f"[NLU] OK: {data['intent']}, Ents:{data['entities']}")
-                     return data
-                else:
-                     logger.error(f"[NLU] JSON inválido/sem intent: {data}");
-                     return {"intent": "UNCLEAR", "entities": {}}
-            except json.JSONDecodeError as json_err: # EXCEPT do TRY INTERNO
-                logger.error(f"[NLU] Erro decode JSON: {json_err}. String: '{json_str if 'json_str' in locals() else raw}'");
-                return {"intent": "UNCLEAR", "entities": {}}
-            except Exception as parse_err: # EXCEPT do TRY INTERNO
-                logger.error(f"[NLU] Erro inesperado parse NLU: {parse_err}", exc_info=True);
-                return {"intent": "UNCLEAR", "entities": {}}
-        else: # Caso de resposta vazia/bloqueada do Gemini
-            reason=getattr(response.candidates[0],'finish_reason','?') if response.candidates else 'X';
-            logger.error(f"[NLU] Resp Gemini vazia/bloq NLU. Razão:{reason}");
-            return None
-    except Exception as e: # EXCEPT do TRY EXTERNO (Erro API)
-        logger.error(f"[NLU] Erro GERAL chamada Gemini NLU: {e}", exc_info=True);
-        return None
+                match = re.search(r'```json\s*(\{.*?\})\s*```', raw, re.DOTALL|re.IGNORECASE); json_str = match.group(1) if match else raw; data = json.loads(json_str)
+                if isinstance(data, dict) and "intent" in data: data.setdefault("entities",{}); logger.info(f"[NLU] OK: {data['intent']}, Ents:{data['entities']}"); return data
+                else: logger.error(f"[NLU] JSON inválido/sem intent: {data}"); return {"intent": "UNCLEAR", "entities": {}}
+            except json.JSONDecodeError as json_err: logger.error(f"[NLU] Erro decode JSON: {json_err}. String: '{json_str if 'json_str' in locals() else raw}'"); return {"intent": "UNCLEAR", "entities": {}}
+            except Exception as parse_err: logger.error(f"[NLU] Erro inesperado parse NLU: {parse_err}", exc_info=True); return {"intent": "UNCLEAR", "entities": {}}
+        else: reason=getattr(response.candidates[0],'finish_reason','?') if response.candidates else 'X'; logger.error(f"[NLU] Resp Gemini vazia/bloq NLU. Razão:{reason}"); return None
+    except Exception as e: logger.error(f"[NLU] Erro GERAL chamada Gemini NLU: {e}", exc_info=True); return None
 
 # --- Função Auxiliar para Verificar Perfil ---
 def is_profile_incomplete(user_data):
@@ -129,7 +112,7 @@ def get_reprompt(user_display_name, field_name, invalid_input=""):
     msg = reprompts.get(field_name, "Inválido. Tente de novo.")
     task = f"Tarefa: User '{user_display_name}' deu input inválido ('{invalid_input}') p/ '{field_name}'. Peça de novo: '{msg}'"; return f"{BASE_PERSONA_PROMPT}\n\n{task}\n\nCaloBot:"
 
-# --- Função Principal de Processamento (v31 - REMOVIDO try/except birth_year) ---
+# --- Função Principal de Processamento (v32 - Separa atribuições múltiplas) ---
 def process_message(user_id, user_name_from_telegram, message_text):
     if not db or not model: logger.critical(f"Abort {user_id}: Deps off."); return "Problemas técnicos internos 🤖💦."
     logger.info(f"\n--- Processando user:{user_id}, Msg:'{message_text}' ---")
@@ -166,69 +149,88 @@ def process_message(user_id, user_name_from_telegram, message_text):
         logger.debug(f"Validando '{text_input_to_validate}' p/ '{currently_awaiting}'")
 
         # --- Bloco de Validação ---
-        # ----- INÍCIO: BLOCO birth_year SEM try/except v31 -----
         if currently_awaiting == 'birth_year':
-            # REMOVED TRY/EXCEPT - Less robust, but avoids SyntaxError for now
+            # v31: Removido try/except daqui (v32 mantém removido)
             year_str = text_input_to_validate
-            if year_str.isdigit() and len(year_str) == 4: # Basic check: contains only digits and has 4 digits
-                 year = int(year_str)
-                 current_year = datetime.datetime.now(datetime.timezone.utc).year;
-                 if 1900 < year <= current_year: # Check range
-                     value_to_save=year; is_valid=True; dict_to_update_key='profile'
-                     logger.info(f"Input '{currently_awaiting}' válido: {value_to_save}")
-                 else:
-                     logger.warning(f"Input '{currently_awaiting}' inválido (range): {year}")
-            else:
-                 logger.warning(f"Input '{currently_awaiting}' inválido (não contém 4 dígitos): {text_input_to_validate}")
-            # Note: This no longer catches ValueError elegantly if int() fails later, but focuses on common valid/invalid cases.
-        # ----- FIM: BLOCO birth_year SEM try/except v31 -----
+            if year_str.isdigit() and len(year_str) == 4:
+                 try: # Try adicionado para int() em v32
+                      year = int(year_str)
+                      current_year = datetime.datetime.now(datetime.timezone.utc).year;
+                      if 1900 < year <= current_year:
+                          # Atribuições separadas v32:
+                          value_to_save = year
+                          is_valid = True
+                          dict_to_update_key = 'profile'
+                          logger.info(f"Input '{currently_awaiting}' válido: {value_to_save}")
+                      else: logger.warning(f"Input '{currently_awaiting}' inválido (range): {year}")
+                 except ValueError: logger.warning(f"Input '{currently_awaiting}' inválido (erro conversão int): {text_input_to_validate}") # Except para o int()
+            else: logger.warning(f"Input '{currently_awaiting}' inválido (não 4 dígitos): {text_input_to_validate}")
         elif currently_awaiting == 'gender':
             text_lower=text_input_to_validate.lower();
-            if text_lower in ['masculino','m','male']: value_to_save='male'; is_valid=True; dict_to_update_key='profile'
-            elif text_lower in ['feminino','f','female']: value_to_save='female'; is_valid=True; dict_to_update_key='profile'
+            if text_lower in ['masculino','m','male']:
+                 # Atribuições separadas v32:
+                 value_to_save = 'male'; is_valid = True; dict_to_update_key = 'profile'
+            elif text_lower in ['feminino','f','female']:
+                 # Atribuições separadas v32:
+                 value_to_save = 'female'; is_valid = True; dict_to_update_key = 'profile'
         elif currently_awaiting == 'height_cm':
-            try: height=float(text_input_to_validate.lower().replace('cm','').replace(',','.').strip());
-                 if 100<=height<=250: value_to_save=int(height); is_valid=True; dict_to_update_key='profile'
-            except ValueError: pass
+            try: # Try para float()
+                 height_str = text_input_to_validate.lower().replace('cm','').replace(',','.').strip()
+                 height = float(height_str)
+                 if 100 <= height <= 250:
+                      # Atribuições separadas v32:
+                      value_to_save = int(height)
+                      is_valid = True
+                      dict_to_update_key = 'profile'
+                 else: logger.warning(f"Input inválido (range): {height}")
+            except ValueError: # Except para float()
+                 logger.warning(f"Input inválido (não float): {text_input_to_validate}")
         elif currently_awaiting == 'current_weight_kg':
-            try: weight=float(text_input_to_validate.lower().replace('kg','').replace(',','.').strip());
-                 if 30<=weight<=300: value_to_save=weight; is_valid=True; dict_to_update_key='profile'
-            except ValueError: pass
+            try: # Try para float()
+                 weight_str = text_input_to_validate.lower().replace('kg','').replace(',','.').strip()
+                 weight = float(weight_str)
+                 if 30 <= weight <= 300:
+                      # Atribuições separadas v32:
+                      value_to_save = weight
+                      is_valid = True
+                      dict_to_update_key = 'profile'
+                 else: logger.warning(f"Input inválido (range): {weight}")
+            except ValueError: # Except para float()
+                 logger.warning(f"Input inválido (não float): {text_input_to_validate}")
         elif currently_awaiting == 'activity_level':
             text_lower=text_input_to_validate.lower(); map_act={'sedentário':'sedentary','leve':'light','moderado':'moderate','ativo':'active','muito ativo':'extra_active'}; valid_en=['sedentary','light','moderate','active','extra_active']; matched=None;
             for k,v in map_act.items():
                  if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
-            if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
+            if matched:
+                 # Atribuições separadas v32:
+                 value_to_save = matched; is_valid = True; dict_to_update_key = 'profile'
         elif currently_awaiting == 'goal':
             text_lower=text_input_to_validate.lower(); map_goal={'perder':'lose','emagrecer':'lose','manter':'maintain','ganhar':'gain','massa':'gain'}; valid_en=['lose','maintain','gain']; matched=None;
             for k,v in map_goal.items():
                 if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
-            if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
-        elif currently_awaiting == 'goal_confirmation':
+            if matched:
+                # Atribuições separadas v32:
+                 value_to_save = matched; is_valid = True; dict_to_update_key = 'profile'
+        elif currently_awaiting == 'goal_confirmation': # Usa lógica simplificada v30
             custom_goal = None; is_confirmation = False; is_valid = False; value_to_save = None;
             dict_to_update_key = None; field_to_save = 'daily_calorie_goal';
             potential_goal_str = None; nlu_intent = None; potential_goal = None
-
             if nlu_result: nlu_intent = nlu_result.get('intent')
             parsed_value_source = None
-            if nlu_intent == 'PROVIDE_INFO' and 'info_value' in nlu_result['entities']:
-                potential_goal_str = str(nlu_result['entities']['info_value']); parsed_value_source = "NLU"
+            if nlu_intent == 'PROVIDE_INFO' and 'info_value' in nlu_result['entities']: potential_goal_str = str(nlu_result['entities']['info_value']); parsed_value_source = "NLU"
             else: cal_match = re.search(r'\d+', message_text);
                   if cal_match: potential_goal_str = cal_match.group(0); parsed_value_source = "REGEX_FALLBACK"
                   else: logger.warning("Nenhuma string numérica encontrada.")
-
             if potential_goal_str:
                 try: cleaned_str = re.sub(r'[^\d]', '', potential_goal_str);
                      if cleaned_str: potential_goal = int(cleaned_str); logger.info(f"String convertida: {potential_goal}")
                      else: logger.warning(f"String vazia pós limpeza: '{potential_goal_str}'"); potential_goal = None
                 except (ValueError, TypeError): logger.warning(f"Erro converter '{potential_goal_str}'"); potential_goal = None
-
             if potential_goal is not None:
                 if 1000 <= potential_goal <= 10000: custom_goal = potential_goal; is_valid = True; value_to_save = custom_goal; dict_to_update_key = 'diet_settings'; logger.info(f"Meta custom ({parsed_value_source}) válida: {value_to_save}")
                 else: logger.warning(f"Meta num ({parsed_value_source}) fora range: {potential_goal}"); custom_goal = potential_goal
-
             if not is_valid:
                 text_lower_orig = message_text.strip().lower(); yes_words = ['sim', 's', 'ok', 'k', 'aceito', 'confirmado', 'confirmo', 'yes', 'y']
                 if (nlu_intent in ['AFFIRMATION', 'CONFIRMATION']) or (text_lower_orig in yes_words):
@@ -236,7 +238,6 @@ def process_message(user_id, user_name_from_telegram, message_text):
                     age=firestore_manager.calculate_age(profile_data.get('birth_year')); bmr=firestore_manager.calculate_bmr_mifflin(profile_data.get('current_weight_kg'),profile_data.get('height_cm'), age, profile_data.get('gender')); tdee=firestore_manager.calculate_tdee(bmr, profile_data.get('activity_level')); suggested=firestore_manager.suggest_calorie_goal(tdee, profile_data.get('goal'))
                     if suggested: value_to_save=suggested; is_valid=True; dict_to_update_key='diet_settings'; logger.info(f"Meta sugerida ({value_to_save}) aceita.")
                     else: logger.error("Erro recalcular meta.")
-
             if not is_valid:
                  logger.warning(f"Input goal_conf inválido final: {message_text}");
                  if custom_goal is not None and not (1000<=custom_goal<=10000): prompt_final=get_reprompt(user_display_name,currently_awaiting,f"{message_text}(Meta fora range)")
@@ -324,11 +325,11 @@ def process_message(user_id, user_name_from_telegram, message_text):
     logger.info(f"--- FIM user:{user_id}(Intent:{intent}).Resp:'{resposta_texto[:100]}...' ---")
     return resposta_texto
 
-# --- Bloco de Teste (v31 - Usa código corrigido) ---
+# --- Bloco de Teste (v32 - Usa código corrigido) ---
 if __name__ == "__main__":
     if db and model and generation_config and safety_settings:
-        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v31 - NLU + Fix SyntaxError birth_year) ---")
-        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V31"
+        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v32 - NLU + Fix Multi-Assign) ---")
+        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V32"
         print(f"\n\n----- PREP: Resetando {test_user_id_nlu} -----"); user_doc_ref_reset = db.collection('users').document(str(test_user_id_nlu))
         try: user_doc_ref_reset.delete(); print(f"Doc {test_user_id_nlu} deletado.")
         except: print(f"Doc {test_user_id_nlu} não existia/erro delete.")
