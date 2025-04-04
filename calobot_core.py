@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nome do arquivo: calobot_core.py (v32 - Separa atribuições múltiplas dentro de try)
+# Nome do arquivo: calobot_core.py (v33 - Simplificação EXTREMA try/except validação)
 
 import firestore_manager
 import vertexai
@@ -112,7 +112,7 @@ def get_reprompt(user_display_name, field_name, invalid_input=""):
     msg = reprompts.get(field_name, "Inválido. Tente de novo.")
     task = f"Tarefa: User '{user_display_name}' deu input inválido ('{invalid_input}') p/ '{field_name}'. Peça de novo: '{msg}'"; return f"{BASE_PERSONA_PROMPT}\n\n{task}\n\nCaloBot:"
 
-# --- Função Principal de Processamento (v32 - Separa atribuições múltiplas) ---
+# --- Função Principal de Processamento (v33 - Simplificação EXTREMA try/except validação) ---
 def process_message(user_id, user_name_from_telegram, message_text):
     if not db or not model: logger.critical(f"Abort {user_id}: Deps off."); return "Problemas técnicos internos 🤖💦."
     logger.info(f"\n--- Processando user:{user_id}, Msg:'{message_text}' ---")
@@ -129,10 +129,9 @@ def process_message(user_id, user_name_from_telegram, message_text):
     if message_text == "__INTERNAL_ONBOARDING_CHECK__":
         logger.info("Check interno onboarding."); run_normal_processing = False; intent = "INTERNAL_CHECK"
         profile_incomplete, missing = is_profile_incomplete(current_user_data)
-        if profile_incomplete:
-            first=missing[0]; logger.info(f"Onboarding perfil: {first}");
-            try: user_doc_ref.update({'user_state.awaiting': first}); logger.info(f"State='{first}'"); prompt_final=get_onboarding_prompt(user_display_name, first)
-            except Exception as e: logger.error(f"Erro set await {first}: {e}"); prompt_final="Erro iniciar perfil."
+        if profile_incomplete: first=missing[0]; logger.info(f"Onboarding perfil: {first}");
+             try: user_doc_ref.update({'user_state.awaiting': first}); logger.info(f"State='{first}'"); prompt_final=get_onboarding_prompt(user_display_name, first)
+             except Exception as e: logger.error(f"Erro set await {first}: {e}"); prompt_final="Erro iniciar perfil."
         elif diet_settings.get('daily_calorie_goal') is None: logger.info("Onboarding meta."); prompt_final=f"{BASE_PERSONA_PROMPT}\n\nTarefa: Perfil ok! Diga prox passo=meta.\n\nCaloBot:"
         else: logger.info("Onboarding OK."); prompt_final = ""
         if not prompt_final: return None
@@ -148,72 +147,65 @@ def process_message(user_id, user_name_from_telegram, message_text):
         else: logger.warning(f"NLU não ajudou ({nlu_result.get('intent') if nlu_result else 'N/A'}). Usando texto."); text_input_to_validate = message_text.strip()
         logger.debug(f"Validando '{text_input_to_validate}' p/ '{currently_awaiting}'")
 
-        # --- Bloco de Validação ---
+        # --- Bloco de Validação (Com try/except EXTREMAMENTE simplificados) ---
         if currently_awaiting == 'birth_year':
-            # v31: Removido try/except daqui (v32 mantém removido)
+            year = None
             year_str = text_input_to_validate
+            # Validação básica primeiro
             if year_str.isdigit() and len(year_str) == 4:
-                 try: # Try adicionado para int() em v32
-                      year = int(year_str)
-                      current_year = datetime.datetime.now(datetime.timezone.utc).year;
-                      if 1900 < year <= current_year:
-                          # Atribuições separadas v32:
-                          value_to_save = year
-                          is_valid = True
-                          dict_to_update_key = 'profile'
-                          logger.info(f"Input '{currently_awaiting}' válido: {value_to_save}")
-                      else: logger.warning(f"Input '{currently_awaiting}' inválido (range): {year}")
-                 except ValueError: logger.warning(f"Input '{currently_awaiting}' inválido (erro conversão int): {text_input_to_validate}") # Except para o int()
-            else: logger.warning(f"Input '{currently_awaiting}' inválido (não 4 dígitos): {text_input_to_validate}")
+                try: # TRY só para int()
+                    year = int(year_str)
+                except ValueError: # EXCEPT só para int()
+                     logger.warning(f"Input inválido (erro conversão int): {text_input_to_validate}")
+            # Lógica FORA do try/except
+            if year is not None:
+                 current_year = datetime.datetime.now(datetime.timezone.utc).year;
+                 if 1900 < year <= current_year: value_to_save=year; is_valid=True; dict_to_update_key='profile'
+                 else: logger.warning(f"Input inválido (range): {year}")
+            else: logger.warning(f"Input inválido (não 4 dígitos ou erro conversão): {text_input_to_validate}")
+
         elif currently_awaiting == 'gender':
             text_lower=text_input_to_validate.lower();
-            if text_lower in ['masculino','m','male']:
-                 # Atribuições separadas v32:
-                 value_to_save = 'male'; is_valid = True; dict_to_update_key = 'profile'
-            elif text_lower in ['feminino','f','female']:
-                 # Atribuições separadas v32:
-                 value_to_save = 'female'; is_valid = True; dict_to_update_key = 'profile'
+            if text_lower in ['masculino','m','male']: value_to_save='male'; is_valid=True; dict_to_update_key='profile'
+            elif text_lower in ['feminino','f','female']: value_to_save='female'; is_valid=True; dict_to_update_key='profile'
+
         elif currently_awaiting == 'height_cm':
-            try: # Try para float()
-                 height_str = text_input_to_validate.lower().replace('cm','').replace(',','.').strip()
-                 height = float(height_str)
-                 if 100 <= height <= 250:
-                      # Atribuições separadas v32:
-                      value_to_save = int(height)
-                      is_valid = True
-                      dict_to_update_key = 'profile'
-                 else: logger.warning(f"Input inválido (range): {height}")
-            except ValueError: # Except para float()
-                 logger.warning(f"Input inválido (não float): {text_input_to_validate}")
+             height = None
+             try: # TRY só para float()
+                  height_str = text_input_to_validate.lower().replace('cm','').replace(',','.').strip()
+                  height = float(height_str)
+             except ValueError: # EXCEPT só para float()
+                  logger.warning(f"Input inválido (não float): {text_input_to_validate}")
+             # Lógica FORA do try/except
+             if height is not None:
+                  if 100 <= height <= 250: value_to_save=int(height); is_valid=True; dict_to_update_key='profile'
+                  else: logger.warning(f"Input inválido (range): {height}")
+
         elif currently_awaiting == 'current_weight_kg':
-            try: # Try para float()
+            weight = None
+            try: # TRY só para float()
                  weight_str = text_input_to_validate.lower().replace('kg','').replace(',','.').strip()
                  weight = float(weight_str)
-                 if 30 <= weight <= 300:
-                      # Atribuições separadas v32:
-                      value_to_save = weight
-                      is_valid = True
-                      dict_to_update_key = 'profile'
-                 else: logger.warning(f"Input inválido (range): {weight}")
-            except ValueError: # Except para float()
+            except ValueError: # EXCEPT só para float()
                  logger.warning(f"Input inválido (não float): {text_input_to_validate}")
+            # Lógica FORA do try/except
+            if weight is not None:
+                 if 30 <= weight <= 300: value_to_save=weight; is_valid=True; dict_to_update_key='profile'
+                 else: logger.warning(f"Input inválido (range): {weight}")
+
         elif currently_awaiting == 'activity_level':
             text_lower=text_input_to_validate.lower(); map_act={'sedentário':'sedentary','leve':'light','moderado':'moderate','ativo':'active','muito ativo':'extra_active'}; valid_en=['sedentary','light','moderate','active','extra_active']; matched=None;
             for k,v in map_act.items():
                  if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
-            if matched:
-                 # Atribuições separadas v32:
-                 value_to_save = matched; is_valid = True; dict_to_update_key = 'profile'
+            if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
         elif currently_awaiting == 'goal':
             text_lower=text_input_to_validate.lower(); map_goal={'perder':'lose','emagrecer':'lose','manter':'maintain','ganhar':'gain','massa':'gain'}; valid_en=['lose','maintain','gain']; matched=None;
             for k,v in map_goal.items():
                 if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
-            if matched:
-                # Atribuições separadas v32:
-                 value_to_save = matched; is_valid = True; dict_to_update_key = 'profile'
-        elif currently_awaiting == 'goal_confirmation': # Usa lógica simplificada v30
+            if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
+        elif currently_awaiting == 'goal_confirmation': # Mantém lógica v30
             custom_goal = None; is_confirmation = False; is_valid = False; value_to_save = None;
             dict_to_update_key = None; field_to_save = 'daily_calorie_goal';
             potential_goal_str = None; nlu_intent = None; potential_goal = None
@@ -325,11 +317,11 @@ def process_message(user_id, user_name_from_telegram, message_text):
     logger.info(f"--- FIM user:{user_id}(Intent:{intent}).Resp:'{resposta_texto[:100]}...' ---")
     return resposta_texto
 
-# --- Bloco de Teste (v32 - Usa código corrigido) ---
+# --- Bloco de Teste (v33 - Usa código corrigido) ---
 if __name__ == "__main__":
     if db and model and generation_config and safety_settings:
-        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v32 - NLU + Fix Multi-Assign) ---")
-        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V32"
+        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v33 - NLU + Simplificação Extrema try/except) ---")
+        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V33"
         print(f"\n\n----- PREP: Resetando {test_user_id_nlu} -----"); user_doc_ref_reset = db.collection('users').document(str(test_user_id_nlu))
         try: user_doc_ref_reset.delete(); print(f"Doc {test_user_id_nlu} deletado.")
         except: print(f"Doc {test_user_id_nlu} não existia/erro delete.")
