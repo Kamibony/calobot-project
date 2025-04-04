@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nome do arquivo: calobot_core.py (v30 - Simplificação try/except goal_confirmation)
+# Nome do arquivo: calobot_core.py (v31 - REMOVIDO try/except do birth_year)
 
 import firestore_manager
 import vertexai
@@ -129,7 +129,7 @@ def get_reprompt(user_display_name, field_name, invalid_input=""):
     msg = reprompts.get(field_name, "Inválido. Tente de novo.")
     task = f"Tarefa: User '{user_display_name}' deu input inválido ('{invalid_input}') p/ '{field_name}'. Peça de novo: '{msg}'"; return f"{BASE_PERSONA_PROMPT}\n\n{task}\n\nCaloBot:"
 
-# --- Função Principal de Processamento (v30 - Simplificação try/except goal_confirmation) ---
+# --- Função Principal de Processamento (v31 - REMOVIDO try/except birth_year) ---
 def process_message(user_id, user_name_from_telegram, message_text):
     if not db or not model: logger.critical(f"Abort {user_id}: Deps off."); return "Problemas técnicos internos 🤖💦."
     logger.info(f"\n--- Processando user:{user_id}, Msg:'{message_text}' ---")
@@ -166,11 +166,22 @@ def process_message(user_id, user_name_from_telegram, message_text):
         logger.debug(f"Validando '{text_input_to_validate}' p/ '{currently_awaiting}'")
 
         # --- Bloco de Validação ---
+        # ----- INÍCIO: BLOCO birth_year SEM try/except v31 -----
         if currently_awaiting == 'birth_year':
-            try: year = int(text_input_to_validate); current_year = datetime.datetime.now(datetime.timezone.utc).year;
-                 if 1900 < year <= current_year: value_to_save=year; is_valid=True; dict_to_update_key='profile'
-                 else: logger.warning(f"Input inválido (range): {year}")
-            except ValueError: logger.warning(f"Input inválido (não número): {text_input_to_validate}")
+            # REMOVED TRY/EXCEPT - Less robust, but avoids SyntaxError for now
+            year_str = text_input_to_validate
+            if year_str.isdigit() and len(year_str) == 4: # Basic check: contains only digits and has 4 digits
+                 year = int(year_str)
+                 current_year = datetime.datetime.now(datetime.timezone.utc).year;
+                 if 1900 < year <= current_year: # Check range
+                     value_to_save=year; is_valid=True; dict_to_update_key='profile'
+                     logger.info(f"Input '{currently_awaiting}' válido: {value_to_save}")
+                 else:
+                     logger.warning(f"Input '{currently_awaiting}' inválido (range): {year}")
+            else:
+                 logger.warning(f"Input '{currently_awaiting}' inválido (não contém 4 dígitos): {text_input_to_validate}")
+            # Note: This no longer catches ValueError elegantly if int() fails later, but focuses on common valid/invalid cases.
+        # ----- FIM: BLOCO birth_year SEM try/except v31 -----
         elif currently_awaiting == 'gender':
             text_lower=text_input_to_validate.lower();
             if text_lower in ['masculino','m','male']: value_to_save='male'; is_valid=True; dict_to_update_key='profile'
@@ -195,73 +206,42 @@ def process_message(user_id, user_name_from_telegram, message_text):
                 if k in text_lower or k==text_lower: matched=v; break
             if not matched and text_lower in valid_en: matched=text_lower
             if matched: value_to_save=matched; is_valid=True; dict_to_update_key='profile'
-        # ----- INÍCIO: BLOCO goal_confirmation SIMPLIFICADO v30 -----
         elif currently_awaiting == 'goal_confirmation':
             custom_goal = None; is_confirmation = False; is_valid = False; value_to_save = None;
-            dict_to_update_key = None; field_to_save = 'daily_calorie_goal'; # Default field
-            potential_goal_str = None; nlu_intent = None; potential_goal = None # Init potential_goal
+            dict_to_update_key = None; field_to_save = 'daily_calorie_goal';
+            potential_goal_str = None; nlu_intent = None; potential_goal = None
 
             if nlu_result: nlu_intent = nlu_result.get('intent')
-
-            # Tentativa 1: Obter string numérica (NLU ou Fallback)
             parsed_value_source = None
             if nlu_intent == 'PROVIDE_INFO' and 'info_value' in nlu_result['entities']:
-                potential_goal_str = str(nlu_result['entities']['info_value'])
-                parsed_value_source = "NLU"
-            else: # Fallback para regex no texto original
-                cal_match = re.search(r'\d+', message_text)
-                if cal_match:
-                    potential_goal_str = cal_match.group(0)
-                    parsed_value_source = "REGEX_FALLBACK"
-                else:
-                    logger.warning("Nenhuma string numérica encontrada via NLU ou Regex.")
+                potential_goal_str = str(nlu_result['entities']['info_value']); parsed_value_source = "NLU"
+            else: cal_match = re.search(r'\d+', message_text);
+                  if cal_match: potential_goal_str = cal_match.group(0); parsed_value_source = "REGEX_FALLBACK"
+                  else: logger.warning("Nenhuma string numérica encontrada.")
 
-            # Tentativa 2: Converter string para int (se encontrada)
             if potential_goal_str:
-                try: # TRY apenas para a conversão
-                    cleaned_str = re.sub(r'[^\d]', '', potential_goal_str) # Limpa novamente
-                    if cleaned_str:
-                        potential_goal = int(cleaned_str)
-                        logger.info(f"String convertida para int: {potential_goal}")
-                    else:
-                        logger.warning(f"String numérica estava vazia pós limpeza: '{potential_goal_str}'")
-                        potential_goal = None # Garante que é None
-                except (ValueError, TypeError): # EXCEPT apenas para a conversão
-                    logger.warning(f"Erro ao converter '{potential_goal_str}' para int.")
-                    potential_goal = None # Garante que é None se a conversão falhar
+                try: cleaned_str = re.sub(r'[^\d]', '', potential_goal_str);
+                     if cleaned_str: potential_goal = int(cleaned_str); logger.info(f"String convertida: {potential_goal}")
+                     else: logger.warning(f"String vazia pós limpeza: '{potential_goal_str}'"); potential_goal = None
+                except (ValueError, TypeError): logger.warning(f"Erro converter '{potential_goal_str}'"); potential_goal = None
 
-            # Tentativa 3: Validar número (se convertido) e Definir custom goal
-            if potential_goal is not None: # Só valida se a conversão funcionou
-                if 1000 <= potential_goal <= 10000:
-                     custom_goal = potential_goal
-                     is_valid = True # É um número válido e no range
-                     value_to_save = custom_goal
-                     dict_to_update_key = 'diet_settings'
-                     logger.info(f"Meta custom ({parsed_value_source}) válida: {value_to_save}")
-                else:
-                     logger.warning(f"Meta numérica ({parsed_value_source}) fora do range: {potential_goal}")
-                     custom_goal = potential_goal # Guarda para mensagem de erro
+            if potential_goal is not None:
+                if 1000 <= potential_goal <= 10000: custom_goal = potential_goal; is_valid = True; value_to_save = custom_goal; dict_to_update_key = 'diet_settings'; logger.info(f"Meta custom ({parsed_value_source}) válida: {value_to_save}")
+                else: logger.warning(f"Meta num ({parsed_value_source}) fora range: {potential_goal}"); custom_goal = potential_goal
 
-            # Tentativa 4: Checar confirmação (NLU ou fallback) se não for custom goal válido
             if not is_valid:
-                text_lower_orig = message_text.strip().lower()
-                yes_words = ['sim', 's', 'ok', 'k', 'aceito', 'confirmado', 'confirmo', 'yes', 'y']
+                text_lower_orig = message_text.strip().lower(); yes_words = ['sim', 's', 'ok', 'k', 'aceito', 'confirmado', 'confirmo', 'yes', 'y']
                 if (nlu_intent in ['AFFIRMATION', 'CONFIRMATION']) or (text_lower_orig in yes_words):
-                    is_confirmation = True
-                    logger.info(f"Confirmação detectada (NLU: {nlu_intent in ['AFFIRMATION', 'CONFIRMATION']}, Fallback: {text_lower_orig in yes_words})")
-                    # Recalcula meta sugerida
+                    is_confirmation = True; logger.info(f"Confirmação (NLU: {nlu_intent in ['AFFIRMATION', 'CONFIRMATION']}, Fallback: {text_lower_orig in yes_words})")
                     age=firestore_manager.calculate_age(profile_data.get('birth_year')); bmr=firestore_manager.calculate_bmr_mifflin(profile_data.get('current_weight_kg'),profile_data.get('height_cm'), age, profile_data.get('gender')); tdee=firestore_manager.calculate_tdee(bmr, profile_data.get('activity_level')); suggested=firestore_manager.suggest_calorie_goal(tdee, profile_data.get('goal'))
-                    if suggested:
-                        value_to_save=suggested; is_valid=True; dict_to_update_key='diet_settings'; logger.info(f"Meta sugerida ({value_to_save}) aceita.")
-                    else: logger.error("Erro recalcular meta.") # is_valid continua False
+                    if suggested: value_to_save=suggested; is_valid=True; dict_to_update_key='diet_settings'; logger.info(f"Meta sugerida ({value_to_save}) aceita.")
+                    else: logger.error("Erro recalcular meta.")
 
-            # Gera reprompt final se nada deu certo
             if not is_valid:
-                 logger.warning(f"Input goal_conf inválido final: {message_text}")
+                 logger.warning(f"Input goal_conf inválido final: {message_text}");
                  if custom_goal is not None and not (1000<=custom_goal<=10000): prompt_final=get_reprompt(user_display_name,currently_awaiting,f"{message_text}(Meta fora range)")
                  else: prompt_final=get_reprompt(user_display_name,currently_awaiting,message_text)
                  intent=f"REPROMPT_{currently_awaiting.upper()}"; run_normal_processing=False
-        # ----- FIM: BLOCO goal_confirmation SIMPLIFICADO v30 -----
         # --- Fim da Validação ---
 
         if is_valid: logger.info(f"Input '{currently_awaiting}' OK:{value_to_save}")
@@ -344,11 +324,11 @@ def process_message(user_id, user_name_from_telegram, message_text):
     logger.info(f"--- FIM user:{user_id}(Intent:{intent}).Resp:'{resposta_texto[:100]}...' ---")
     return resposta_texto
 
-# --- Bloco de Teste (v30 - Usa código corrigido) ---
+# --- Bloco de Teste (v31 - Usa código corrigido) ---
 if __name__ == "__main__":
     if db and model and generation_config and safety_settings:
-        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v30 - NLU + Fix SyntaxError goal_conf) ---")
-        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V30"
+        print("\n--- INICIANDO TESTE DE INTEGRAÇÃO CALOBOT_CORE (v31 - NLU + Fix SyntaxError birth_year) ---")
+        test_user_id_nlu = 999999902; test_user_name_nlu = "Tester NLU V31"
         print(f"\n\n----- PREP: Resetando {test_user_id_nlu} -----"); user_doc_ref_reset = db.collection('users').document(str(test_user_id_nlu))
         try: user_doc_ref_reset.delete(); print(f"Doc {test_user_id_nlu} deletado.")
         except: print(f"Doc {test_user_id_nlu} não existia/erro delete.")
